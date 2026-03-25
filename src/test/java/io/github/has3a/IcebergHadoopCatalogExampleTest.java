@@ -25,6 +25,7 @@ import software.amazon.awssdk.services.s3.model.BucketAlreadyOwnedByYouException
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
 
 import java.net.URI;
+import java.time.Duration;
 import java.util.Collections;
 
 import java.io.IOException;
@@ -33,6 +34,28 @@ import java.util.Map;
 import java.util.UUID;
 
 public class IcebergHadoopCatalogExampleTest {
+
+    /**
+     * Pushes {@link BulkheadClientConfig} into catalog properties consumed by
+     * {@link CdsIcebergS3ClientFactory} (same keys as {@code parseConfig}).
+     */
+    private static void putBulkheadClientConfig(Map<String, String> properties, BulkheadClientConfig config) {
+        properties.put("s3.pool.metadata.max-connections", Integer.toString(config.metadataMaxConnections()));
+        properties.put("s3.pool.metadata.connection-timeout-ms",
+                Long.toString(config.metadataConnectionTimeout().toMillis()));
+        properties.put("s3.pool.metadata.socket-timeout-ms",
+                Long.toString(config.metadataSocketTimeout().toMillis()));
+        properties.put("s3.pool.metadata.acquisition-timeout-ms",
+                Long.toString(config.metadataConnectionAcquisitionTimeout().toMillis()));
+        properties.put("s3.pool.data.max-connections", Integer.toString(config.dataMaxConnections()));
+        properties.put("s3.pool.data.connection-timeout-ms",
+                Long.toString(config.dataConnectionTimeout().toMillis()));
+        properties.put("s3.pool.data.socket-timeout-ms",
+                Long.toString(config.dataSocketTimeout().toMillis()));
+        properties.put("s3.pool.data.acquisition-timeout-ms",
+                Long.toString(config.dataConnectionAcquisitionTimeout().toMillis()));
+        properties.put("s3.proxy.quarantine-ttl-ms", Long.toString(config.quarantineTtlMillis()));
+    }
 
     @Test
     public void testIcebergHadoopCatalogReadWrite() throws IOException {
@@ -63,12 +86,27 @@ public class IcebergHadoopCatalogExampleTest {
         properties.put("s3.access-key-id", "minioadmin");
         properties.put("s3.secret-access-key", "minioadmin");
 
-        properties.put("s3.pool.data.max-connections", "400");
-        properties.put("s3.proxy.quarantine-ttl-ms", "10000");
+        // BulkheadClientConfig sample: programmatic tuning, then mirrored into Iceberg catalog props for CdsIcebergS3ClientFactory
+        BulkheadClientConfig proxyConfig = BulkheadClientConfig.builder()
+                .metadataMaxConnections(50)
+                .metadataConnectionTimeout(Duration.ofSeconds(2))
+                .metadataSocketTimeout(Duration.ofSeconds(5))
+                .metadataConnectionAcquisitionTimeout(Duration.ofSeconds(3))
+                .dataMaxConnections(400)
+                .dataConnectionTimeout(Duration.ofSeconds(3))
+                .dataSocketTimeout(Duration.ofSeconds(60))
+                .dataConnectionAcquisitionTimeout(Duration.ofSeconds(5))
+                .quarantineTtlMillis(10_000L)
+                .build();
+        putBulkheadClientConfig(properties, proxyConfig);
 
         try (S3Client setupClient = BulkheadS3ClientFactory.createSmartProxy(
                 Collections.singletonList(URI.create("http://127.0.0.1:9000")),
-                "minioadmin", "minioadmin", Region.US_EAST_1)) {
+                "minioadmin",
+                "minioadmin",
+                Region.US_EAST_1,
+                S3ClientMetrics.NO_OP,
+                proxyConfig)) {
             try {
                 setupClient.createBucket(CreateBucketRequest.builder().bucket("integration-test-bucket").build());
             } catch (BucketAlreadyOwnedByYouException | BucketAlreadyExistsException ignored) {
