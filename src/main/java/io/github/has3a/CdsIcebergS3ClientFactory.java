@@ -33,6 +33,7 @@ import java.util.stream.Collectors;
  *   <tr><td>{@code s3.pool.data.socket-timeout-ms}</td><td>60000</td><td>Data socket timeout (ms)</td></tr>
  *   <tr><td>{@code s3.pool.data.acquisition-timeout-ms}</td><td>5000</td><td>Data connection acquisition timeout (ms)</td></tr>
  *   <tr><td>{@code s3.proxy.quarantine-ttl-ms}</td><td>30000</td><td>Node quarantine duration (ms)</td></tr>
+ *   <tr><td>{@code s3.proxy.multipart-route-idle-ttl-ms}</td><td>120000</td><td>Multipart upload sticky route idle timeout (ms)</td></tr>
  * </table>
  */
 public class CdsIcebergS3ClientFactory implements org.apache.iceberg.aws.AwsClientFactory {
@@ -115,6 +116,9 @@ public class CdsIcebergS3ClientFactory implements org.apache.iceberg.aws.AwsClie
                 .quarantineTtlMillis(
                         longProp(p, "s3.proxy.quarantine-ttl-ms",
                                 BulkheadClientConfig.DEFAULT_QUARANTINE_TTL_MILLIS))
+                .multipartRouteIdleTtlMillis(
+                        longProp(p, "s3.proxy.multipart-route-idle-ttl-ms",
+                                BulkheadClientConfig.DEFAULT_MULTIPART_ROUTE_IDLE_TTL_MILLIS))
                 .build();
     }
 

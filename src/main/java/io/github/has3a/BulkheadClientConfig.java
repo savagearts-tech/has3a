@@ -58,6 +58,13 @@ public final class BulkheadClientConfig {
      */
     public static final long DEFAULT_QUARANTINE_TTL_MILLIS = 30_000L;
 
+    /**
+     * Default duration for which a multipart upload route remains sticky.
+     * UploadPart operations matching the uploadId will be routed to the same node
+     * that processed the CreateMultipartUpload.
+     */
+    public static final long DEFAULT_MULTIPART_ROUTE_IDLE_TTL_MILLIS = 120_000L;
+
     // ── Fields ────────────────────────────────────────────────────────────────
 
     private final int      metadataMaxConnections;
@@ -71,6 +78,7 @@ public final class BulkheadClientConfig {
     private final Duration dataConnectionAcquisitionTimeout;
 
     private final long quarantineTtlMillis;
+    private final long multipartRouteIdleTtlMillis;
 
     // ── Construction ─────────────────────────────────────────────────────────
 
@@ -84,6 +92,7 @@ public final class BulkheadClientConfig {
         this.dataSocketTimeout                      = b.dataSocketTimeout;
         this.dataConnectionAcquisitionTimeout       = b.dataConnectionAcquisitionTimeout;
         this.quarantineTtlMillis                    = b.quarantineTtlMillis;
+        this.multipartRouteIdleTtlMillis            = b.multipartRouteIdleTtlMillis;
     }
 
     /** Returns a new builder pre-populated with all default values. */
@@ -109,6 +118,7 @@ public final class BulkheadClientConfig {
     public Duration dataConnectionAcquisitionTimeout()       { return dataConnectionAcquisitionTimeout; }
 
     public long     quarantineTtlMillis()                    { return quarantineTtlMillis; }
+    public long     multipartRouteIdleTtlMillis()            { return multipartRouteIdleTtlMillis; }
 
     // ── Builder ───────────────────────────────────────────────────────────────
 
@@ -124,7 +134,8 @@ public final class BulkheadClientConfig {
         private Duration dataSocketTimeout                    = DEFAULT_DATA_SOCKET_TIMEOUT;
         private Duration dataConnectionAcquisitionTimeout     = DEFAULT_DATA_CONNECTION_ACQUISITION_TIMEOUT;
 
-        private long quarantineTtlMillis = DEFAULT_QUARANTINE_TTL_MILLIS;
+        private long quarantineTtlMillis         = DEFAULT_QUARANTINE_TTL_MILLIS;
+        private long multipartRouteIdleTtlMillis = DEFAULT_MULTIPART_ROUTE_IDLE_TTL_MILLIS;
 
         private Builder() {}
 
@@ -151,6 +162,12 @@ public final class BulkheadClientConfig {
          * Defaults to {@value BulkheadClientConfig#DEFAULT_QUARANTINE_TTL_MILLIS} ms.
          */
         public Builder quarantineTtlMillis(long v)                   { quarantineTtlMillis = v;                  return this; }
+
+        /**
+         * Duration in milliseconds for which a multipart upload route is kept alive.
+         * Defaults to {@value BulkheadClientConfig#DEFAULT_MULTIPART_ROUTE_IDLE_TTL_MILLIS} ms.
+         */
+        public Builder multipartRouteIdleTtlMillis(long v)           { multipartRouteIdleTtlMillis = v;          return this; }
 
         public BulkheadClientConfig build() {
             return new BulkheadClientConfig(this);

@@ -34,6 +34,7 @@ class BulkheadClientConfigTest {
         assertEquals(Duration.ofSeconds(5),  cfg.dataConnectionAcquisitionTimeout());
 
         assertEquals(30_000L, cfg.quarantineTtlMillis());
+        assertEquals(BulkheadClientConfig.DEFAULT_MULTIPART_ROUTE_IDLE_TTL_MILLIS, cfg.multipartRouteIdleTtlMillis());
     }
 
     @Test
@@ -50,6 +51,7 @@ class BulkheadClientConfigTest {
         assertEquals(fromDefaults.dataSocketTimeout(),                    fromBuilder.dataSocketTimeout());
         assertEquals(fromDefaults.dataConnectionAcquisitionTimeout(),     fromBuilder.dataConnectionAcquisitionTimeout());
         assertEquals(fromDefaults.quarantineTtlMillis(),                  fromBuilder.quarantineTtlMillis());
+        assertEquals(fromDefaults.multipartRouteIdleTtlMillis(),          fromBuilder.multipartRouteIdleTtlMillis());
     }
 
     // -------------------------------------------------------------------------
@@ -68,6 +70,7 @@ class BulkheadClientConfigTest {
                 .dataSocketTimeout(Duration.ofSeconds(120))
                 .dataConnectionAcquisitionTimeout(Duration.ofSeconds(10))
                 .quarantineTtlMillis(5_000L)
+                .multipartRouteIdleTtlMillis(120_000L)
                 .build();
 
         assertEquals(10,  cfg.metadataMaxConnections());
@@ -81,6 +84,7 @@ class BulkheadClientConfigTest {
         assertEquals(Duration.ofSeconds(10),  cfg.dataConnectionAcquisitionTimeout());
 
         assertEquals(5_000L, cfg.quarantineTtlMillis());
+        assertEquals(120_000L, cfg.multipartRouteIdleTtlMillis());
     }
 
     @Test
@@ -152,6 +156,7 @@ class BulkheadClientConfigTest {
         props.put("s3.pool.metadata.connection-timeout-ms", "1000");
         props.put("s3.pool.data.socket-timeout-ms",         "30000");
         props.put("s3.proxy.quarantine-ttl-ms",             "15000");
+        props.put("s3.proxy.multipart-route-idle-ttl-ms",   "7200000");
 
         assertDoesNotThrow(() -> {
             CdsIcebergS3ClientFactory factory = new CdsIcebergS3ClientFactory();

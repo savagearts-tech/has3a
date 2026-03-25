@@ -98,7 +98,8 @@ public class BulkheadS3ClientFactory {
 
         return SmartS3ClientProxy.create(
                 metadataClients, dataClients, endpoints,
-                metrics, config.quarantineTtlMillis());
+                metrics, config.quarantineTtlMillis(),
+                config.multipartRouteIdleTtlMillis());
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────

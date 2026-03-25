@@ -6,7 +6,7 @@
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
-        <aws.java.sdk.version>2.20.162</aws.java.sdk.version>
+        <aws.java.sdk.version>2.29.17</aws.java.sdk.version>
     </properties>
     <dependencyManagement>
         <dependencies>

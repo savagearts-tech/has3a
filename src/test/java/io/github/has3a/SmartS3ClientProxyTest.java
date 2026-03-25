@@ -648,4 +648,55 @@ public class SmartS3ClientProxyTest {
                 .filter(ProxyStats.NodeStats::quarantined).count();
         assertEquals(1, quarantinedNow, "the failed node should report quarantined=true");
     }
+
+    @Test
+    void testListParts_routesToDataClient() {
+        S3Client metaClient = mock(S3Client.class);
+        S3Client dataClient = mock(S3Client.class);
+        S3Client proxy = SmartS3ClientProxy.create(
+                List.of(metaClient),
+                List.of(dataClient),
+                List.of(URI.create("http://mock")));
+        proxy.listParts(ListPartsRequest.builder()
+                .bucket("b").key("k").uploadId("uid").build());
+        verify(dataClient, times(1)).listParts(any(ListPartsRequest.class));
+        verify(metaClient, never()).listParts(any(ListPartsRequest.class));
+    }
+
+    @Test
+    @SuppressWarnings("deprecation")
+    void testUploadPartCopy_routesToDataClient() {
+        S3Client metaClient = mock(S3Client.class);
+        S3Client dataClient = mock(S3Client.class);
+        S3Client proxy = SmartS3ClientProxy.create(
+                List.of(metaClient),
+                List.of(dataClient),
+                List.of(URI.create("http://mock")));
+        proxy.uploadPartCopy(UploadPartCopyRequest.builder()
+                .copySource("src-bucket/src-key")
+                .destinationBucket("b")
+                .destinationKey("k")
+                .uploadId("uid")
+                .partNumber(1)
+                .build());
+        verify(dataClient, times(1)).uploadPartCopy(any(UploadPartCopyRequest.class));
+        verify(metaClient, never()).uploadPartCopy(any(UploadPartCopyRequest.class));
+    }
+
+    @Test
+    void testClose_clearsStickyRoutes() {
+        S3Client metaClient = mock(S3Client.class);
+        S3Client dataClient = mock(S3Client.class);
+        when(dataClient.createMultipartUpload(any(CreateMultipartUploadRequest.class)))
+                .thenReturn(CreateMultipartUploadResponse.builder()
+                        .bucket("b").key("k").uploadId("sticky-u1").build());
+        S3Client proxy = SmartS3ClientProxy.create(
+                List.of(metaClient),
+                List.of(dataClient),
+                List.of(URI.create("http://mock")));
+        proxy.createMultipartUpload(CreateMultipartUploadRequest.builder().bucket("b").key("k").build());
+        assertEquals(1, SmartS3ClientProxy.handlerOf(proxy).stickyRouteCountForTests());
+        proxy.close();
+        assertEquals(0, SmartS3ClientProxy.handlerOf(proxy).stickyRouteCountForTests());
+    }
 }

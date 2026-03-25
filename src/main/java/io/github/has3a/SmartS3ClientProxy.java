@@ -5,6 +5,14 @@ import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.exception.ApiCallAttemptTimeoutException;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CreateMultipartUploadResponse;
+import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadResponse;
+import software.amazon.awssdk.services.s3.model.AbortMultipartUploadResponse;
+import software.amazon.awssdk.services.s3.model.UploadPartRequest;
+import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.AbortMultipartUploadRequest;
+import software.amazon.awssdk.services.s3.model.ListPartsRequest;
+import software.amazon.awssdk.services.s3.model.UploadPartCopyRequest;
 
 import java.io.IOException;
 import java.lang.reflect.InvocationHandler;
@@ -35,6 +43,18 @@ public class SmartS3ClientProxy implements InvocationHandler {
     private final ConcurrentHashMap<Integer, Long> quarantinedNodes = new ConcurrentHashMap<>();
     private final long quarantineTtlMillis;
 
+    // ── multipart stickiness ──────────────────────────────────────────────────
+    private static class StickyRoute {
+        final int nodeIndex;
+        volatile long expiry;
+        StickyRoute(int nodeIndex, long expiry) {
+            this.nodeIndex = nodeIndex;
+            this.expiry = expiry;
+        }
+    }
+    private final ConcurrentHashMap<String, StickyRoute> stickyRoutes = new ConcurrentHashMap<>();
+    private final long multipartRouteIdleTtlMillis;
+
     // ── observable counters ───────────────────────────────────────────────────
     private final AtomicLong totalRequests = new AtomicLong(0);
     private final AtomicLong failoverCount = new AtomicLong(0);
@@ -43,11 +63,15 @@ public class SmartS3ClientProxy implements InvocationHandler {
     private final AtomicLongArray quarantineCounts;
 
     // ── fast-path routing ─────────────────────────────────────────────────────
-    // Fix #6: Added missing multipart + getObjectAsBytes operations to DATA tier
+    /**
+     * Data-tier operations (bulkhead data pool). Keep in sync with {@code S3Client} when upgrading
+     * the AWS SDK — see {@code docs/sdk-upgrade-audit.md}.
+     */
     private static final Set<String> DATA_OPERATIONS = Set.of(
             "putObject", "getObject", "uploadPart", "copyObject",
             "getObjectAsBytes",
-            "createMultipartUpload", "completeMultipartUpload", "abortMultipartUpload"
+            "createMultipartUpload", "completeMultipartUpload", "abortMultipartUpload",
+            "listParts", "uploadPartCopy"
     );
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -59,18 +83,19 @@ public class SmartS3ClientProxy implements InvocationHandler {
             List<S3Client>  dataClients,
             List<URI>       endpoints,
             S3ClientMetrics metrics,
-            long            quarantineTtlMillis) {
+            long            quarantineTtlMillis,
+            long            multipartRouteIdleTtlMillis) {
 
         this.metadataClients    = metadataClients.toArray(new S3Client[0]);
         this.dataClients        = dataClients.toArray(new S3Client[0]);
         this.endpoints          = endpoints.toArray(new URI[0]);
         this.metrics            = metrics;
         this.quarantineTtlMillis = quarantineTtlMillis;
+        this.multipartRouteIdleTtlMillis = multipartRouteIdleTtlMillis;
         this.quarantineCounts   = new AtomicLongArray(endpoints.size());
 
         if (metrics == S3ClientMetrics.NO_OP) {
-            log.warn("SmartS3ClientProxy created with no-op metrics �?" +
-                     "pass a S3ClientMetrics implementation to enable observability");
+            log.warn("SmartS3ClientProxy created with no-op metrics - pass a S3ClientMetrics implementation to enable observability");
         }
     }
 
@@ -86,7 +111,9 @@ public class SmartS3ClientProxy implements InvocationHandler {
             List<S3Client>  dataClients,
             List<URI>       endpoints,
             S3ClientMetrics metrics) {
-        return create(metadataClients, dataClients, endpoints, metrics, 30_000L);
+        return create(metadataClients, dataClients, endpoints, metrics,
+                BulkheadClientConfig.DEFAULT_QUARANTINE_TTL_MILLIS,
+                BulkheadClientConfig.DEFAULT_MULTIPART_ROUTE_IDLE_TTL_MILLIS);
     }
 
     public static S3Client create(
@@ -95,16 +122,27 @@ public class SmartS3ClientProxy implements InvocationHandler {
             List<URI>       endpoints,
             S3ClientMetrics metrics,
             long            quarantineTtlMillis) {
+        return create(metadataClients, dataClients, endpoints, metrics, quarantineTtlMillis,
+                BulkheadClientConfig.DEFAULT_MULTIPART_ROUTE_IDLE_TTL_MILLIS);
+    }
+
+    public static S3Client create(
+            List<S3Client>  metadataClients,
+            List<S3Client>  dataClients,
+            List<URI>       endpoints,
+            S3ClientMetrics metrics,
+            long            quarantineTtlMillis,
+            long            multipartRouteIdleTtlMillis) {
 
         SmartS3ClientProxy handler =
-                new SmartS3ClientProxy(metadataClients, dataClients, endpoints, metrics, quarantineTtlMillis);
+                new SmartS3ClientProxy(metadataClients, dataClients, endpoints, metrics, quarantineTtlMillis, multipartRouteIdleTtlMillis);
         return (S3Client) Proxy.newProxyInstance(
                 S3Client.class.getClassLoader(),
                 new Class<?>[]{S3Client.class},
                 handler);
     }
 
-    /** Convenience accessor �?unwraps the handler from a proxy created by this class. */
+    /** Convenience accessor - unwraps the handler from a proxy created by this class. */
     public static SmartS3ClientProxy handlerOf(S3Client proxy) {
         return (SmartS3ClientProxy) Proxy.getInvocationHandler(proxy);
     }
@@ -137,14 +175,43 @@ public class SmartS3ClientProxy implements InvocationHandler {
 
         totalRequests.incrementAndGet();
 
-        for (int attempt = 0; attempt < maxNodes; attempt++) {
-            int nodeIndex = getHealthyNodeIndex(maxNodes);
+        String uploadId = extractUploadId(args);
+        int stickyNodeIndex = -1;
+        if (uploadId != null) {
+            StickyRoute route = stickyRoutes.get(uploadId);
+            if (route != null && System.currentTimeMillis() <= route.expiry) {
+                stickyNodeIndex = route.nodeIndex;
+                route.expiry = System.currentTimeMillis() + multipartRouteIdleTtlMillis; // lazy TTL refresh
+            } else if (route != null) {
+                stickyRoutes.remove(uploadId);
+            }
+        }
+
+        int maxAttempts = stickyNodeIndex >= 0 ? 1 : maxNodes;
+
+        for (int attempt = 0; attempt < maxAttempts; attempt++) {
+            int nodeIndex = stickyNodeIndex >= 0 ? stickyNodeIndex : getHealthyNodeIndex(maxNodes);
             S3Client activeClient = targetClients[nodeIndex];
             long startNs = System.nanoTime();
 
             try {
                 Object result = method.invoke(activeClient, args);
                 long durationNs = System.nanoTime() - startNs;
+
+                // Track stickiness
+                if (result instanceof CreateMultipartUploadResponse) {
+                    CreateMultipartUploadResponse resp = (CreateMultipartUploadResponse) result;
+                    String uid = resp.uploadId();
+                    if (uid != null && !uid.isEmpty()) {
+                        stickyRoutes.put(uid, new StickyRoute(nodeIndex, System.currentTimeMillis() + multipartRouteIdleTtlMillis));
+                    }
+                } else if (result instanceof CompleteMultipartUploadResponse ||
+                           result instanceof AbortMultipartUploadResponse) {
+                    if (uploadId != null) {
+                        stickyRoutes.remove(uploadId);
+                    }
+                }
+
                 metrics.record(new S3ClientMetrics.CallRecord(
                         method.getName(), tier, nodeIndex, durationNs,
                         S3ClientMetrics.Outcome.SUCCESS));
@@ -164,7 +231,7 @@ public class SmartS3ClientProxy implements InvocationHandler {
                     continue; // failover to next node
                 }
 
-                // Business exception (4xx, checksum failure, etc.) �?propagate immediately
+                // Business exception (4xx, checksum failure, etc.) - propagate immediately
                 metrics.record(new S3ClientMetrics.CallRecord(
                         method.getName(), tier, nodeIndex, durationNs,
                         S3ClientMetrics.Outcome.ERROR));
@@ -177,7 +244,7 @@ public class SmartS3ClientProxy implements InvocationHandler {
         Throwable toThrow = lastException != null
                 ? lastException
                 : new RuntimeException("All MinIO nodes failed.");
-        log.error("operation={} all nodes failed �?last exception: {}",
+        log.error("operation={} all nodes failed - last exception: {}",
                 method.getName(), toThrow.getMessage());
         throw toThrow;
     }
@@ -185,6 +252,17 @@ public class SmartS3ClientProxy implements InvocationHandler {
     // ─────────────────────────────────────────────────────────────────────────
     // Routing helpers
     // ─────────────────────────────────────────────────────────────────────────
+
+    private String extractUploadId(Object[] args) {
+        if (args == null || args.length == 0) return null;
+        Object req = args[0];
+        if (req instanceof UploadPartRequest) return ((UploadPartRequest) req).uploadId();
+        if (req instanceof CompleteMultipartUploadRequest) return ((CompleteMultipartUploadRequest) req).uploadId();
+        if (req instanceof AbortMultipartUploadRequest) return ((AbortMultipartUploadRequest) req).uploadId();
+        if (req instanceof ListPartsRequest) return ((ListPartsRequest) req).uploadId();
+        if (req instanceof UploadPartCopyRequest) return ((UploadPartCopyRequest) req).uploadId();
+        return null;
+    }
 
     /**
      * Fix #1: Consume exactly ONE counter token per invocation, then scan linearly.
@@ -206,7 +284,7 @@ public class SmartS3ClientProxy implements InvocationHandler {
                 return candidate;
             }
         }
-        // All nodes quarantined �?degrade to start, consuming no extra counter tokens
+        // All nodes quarantined - degrade to start, consuming no extra counter tokens
         return start;
     }
 
@@ -225,7 +303,7 @@ public class SmartS3ClientProxy implements InvocationHandler {
             log.warn("action=quarantine_start node={} endpoint={} expiresAt={}",
                     nodeIndex, endpoints[nodeIndex], expiry);
         } else {
-            // Already quarantined �?silently refresh TTL to extend isolation period
+            // Already quarantined - silently refresh TTL to extend isolation period
             quarantinedNodes.put(nodeIndex, expiry);
         }
     }
@@ -234,7 +312,7 @@ public class SmartS3ClientProxy implements InvocationHandler {
      * Fix #2: Only treat genuine network-layer failures as quarantine triggers.
      * <p>
      * The former implementation included plain {@code RetryableException}, which
-     * covers HTTP 429 (throttling) and checksum failures �?neither indicates a node
+     * covers HTTP 429 (throttling) and checksum failures - neither indicates a node
      * is unreachable and neither warrants quarantining the node.
      */
     private boolean isNetworkFailure(Throwable t) {
@@ -251,8 +329,16 @@ public class SmartS3ClientProxy implements InvocationHandler {
 
     // Fix #3: Close ALL underlying S3Clients to prevent ApacheHttpClient pool leaks
     private void closeAll() {
+        stickyRoutes.clear();
         for (S3Client c : metadataClients) closeQuietly(c);
         for (S3Client c : dataClients)     closeQuietly(c);
+    }
+
+    /**
+     * Test hook: sticky multipart route count (always 0 after {@code close()}).
+     */
+    int stickyRouteCountForTests() {
+        return stickyRoutes.size();
     }
 
     private void closeQuietly(S3Client c) {
