@@ -699,4 +699,58 @@ public class SmartS3ClientProxyTest {
         proxy.close();
         assertEquals(0, SmartS3ClientProxy.handlerOf(proxy).stickyRouteCountForTests());
     }
+
+    // -------------------------------------------------------------------------
+    // 11. Pool Intervention: rebuilding the connection pool
+    // -------------------------------------------------------------------------
+
+    @Test
+    void testForceRebuildPools_swapsUnderlyingClients() throws Exception {
+        S3Client meta1 = mock(S3Client.class);
+        S3Client data1 = mock(S3Client.class);
+
+        S3Client meta2 = mock(S3Client.class);
+        S3Client data2 = mock(S3Client.class);
+
+        java.util.concurrent.atomic.AtomicInteger rebuildCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.function.Supplier<SmartS3ClientProxy.Clients> supplier = () -> {
+            rebuildCount.incrementAndGet();
+            return new SmartS3ClientProxy.Clients(List.of(meta2), List.of(data2));
+        };
+
+        S3Client proxy = SmartS3ClientProxy.create(
+                List.of(meta1),
+                List.of(data1),
+                List.of(URI.create("http://mock")),
+                S3ClientMetrics.NO_OP,
+                1000,
+                1000,
+                supplier
+        );
+
+        proxy.listObjectsV2(ListObjectsV2Request.builder().build());
+        verify(meta1, times(1)).listObjectsV2(any(ListObjectsV2Request.class));
+        verify(meta2, never()).listObjectsV2(any(ListObjectsV2Request.class));
+
+        // Cast to S3ClientPoolManager and trigger rebuild
+        S3ClientPoolManager manager = (S3ClientPoolManager) proxy;
+        manager.forceRebuildPools();
+
+        assertEquals(1, rebuildCount.get(), "Rebuild logic must be invoked");
+
+        // Wait shortly for async close to run
+        Thread.sleep(100);
+
+        // New requests should hit the new clients
+        proxy.listObjectsV2(ListObjectsV2Request.builder().build());
+        verify(meta2, times(1)).listObjectsV2(any(ListObjectsV2Request.class));
+
+        // Old clients must have been closed
+        verify(meta1, times(1)).close();
+        verify(data1, times(1)).close();
+
+        // New clients should not be closed
+        verify(meta2, never()).close();
+        verify(data2, never()).close();
+    }
 }

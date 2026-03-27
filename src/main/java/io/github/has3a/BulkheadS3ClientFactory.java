@@ -12,6 +12,7 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 public class BulkheadS3ClientFactory {
 
@@ -51,9 +52,6 @@ public class BulkheadS3ClientFactory {
             List<URI> endpoints, String accessKey, String secretKey, Region region,
             S3ClientMetrics metrics, BulkheadClientConfig config) {
 
-        List<S3Client> metadataClients = new ArrayList<>();
-        List<S3Client> dataClients     = new ArrayList<>();
-
         S3Configuration s3Config = S3Configuration.builder()
                 .pathStyleAccessEnabled(true)
                 .build();
@@ -61,45 +59,54 @@ public class BulkheadS3ClientFactory {
         StaticCredentialsProvider credentialsProvider = StaticCredentialsProvider.create(
                 AwsBasicCredentials.create(accessKey, secretKey));
 
-        for (URI endpoint : endpoints) {
-            SdkHttpClient metadataHttpClient = buildApacheHttpClient(
-                    config.metadataMaxConnections(),
-                    config.metadataConnectionTimeout(),
-                    config.metadataSocketTimeout(),
-                    config.metadataConnectionAcquisitionTimeout()
-            );
+        Supplier<SmartS3ClientProxy.Clients> clientSupplier = () -> {
+            List<S3Client> metadataClients = new ArrayList<>();
+            List<S3Client> dataClients     = new ArrayList<>();
 
-            SdkHttpClient dataHttpClient = buildApacheHttpClient(
-                    config.dataMaxConnections(),
-                    config.dataConnectionTimeout(),
-                    config.dataSocketTimeout(),
-                    config.dataConnectionAcquisitionTimeout()
-            );
+            for (URI endpoint : endpoints) {
+                SdkHttpClient metadataHttpClient = buildApacheHttpClient(
+                        config.metadataMaxConnections(),
+                        config.metadataConnectionTimeout(),
+                        config.metadataSocketTimeout(),
+                        config.metadataConnectionAcquisitionTimeout()
+                );
 
-            S3Client metadataClient = S3Client.builder()
-                    .endpointOverride(endpoint)
-                    .region(region)
-                    .credentialsProvider(credentialsProvider)
-                    .serviceConfiguration(s3Config)
-                    .httpClient(metadataHttpClient)
-                    .build();
+                SdkHttpClient dataHttpClient = buildApacheHttpClient(
+                        config.dataMaxConnections(),
+                        config.dataConnectionTimeout(),
+                        config.dataSocketTimeout(),
+                        config.dataConnectionAcquisitionTimeout()
+                );
 
-            S3Client dataClient = S3Client.builder()
-                    .endpointOverride(endpoint)
-                    .region(region)
-                    .credentialsProvider(credentialsProvider)
-                    .serviceConfiguration(s3Config)
-                    .httpClient(dataHttpClient)
-                    .build();
+                S3Client metadataClient = S3Client.builder()
+                        .endpointOverride(endpoint)
+                        .region(region)
+                        .credentialsProvider(credentialsProvider)
+                        .serviceConfiguration(s3Config)
+                        .httpClient(metadataHttpClient)
+                        .build();
 
-            metadataClients.add(metadataClient);
-            dataClients.add(dataClient);
-        }
+                S3Client dataClient = S3Client.builder()
+                        .endpointOverride(endpoint)
+                        .region(region)
+                        .credentialsProvider(credentialsProvider)
+                        .serviceConfiguration(s3Config)
+                        .httpClient(dataHttpClient)
+                        .build();
+
+                metadataClients.add(metadataClient);
+                dataClients.add(dataClient);
+            }
+            return new SmartS3ClientProxy.Clients(metadataClients, dataClients);
+        };
+
+        SmartS3ClientProxy.Clients initialClients = clientSupplier.get();
 
         return SmartS3ClientProxy.create(
-                metadataClients, dataClients, endpoints,
+                initialClients.metadataClients, initialClients.dataClients, endpoints,
                 metrics, config.quarantineTtlMillis(),
-                config.multipartRouteIdleTtlMillis());
+                config.multipartRouteIdleTtlMillis(),
+                clientSupplier);
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
