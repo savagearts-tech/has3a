@@ -70,6 +70,11 @@ public class CdsIcebergS3ClientFactory implements org.apache.iceberg.aws.AwsClie
         return this.cachedProxyClient;
     }
 
+    // Iceberg 1.10+ requirement
+    public software.amazon.awssdk.services.s3.S3AsyncClient s3Async() {
+        throw new UnsupportedOperationException("CdsIcebergS3ClientFactory does not support S3AsyncClient");
+    }
+
     @Override
     public DynamoDbClient dynamo() {
         return null; // Not supported by this proxy factory
