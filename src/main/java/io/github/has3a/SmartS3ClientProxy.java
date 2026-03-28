@@ -387,11 +387,18 @@ public class SmartS3ClientProxy implements InvocationHandler, S3ClientPoolManage
             return true;
         if (t instanceof ApiCallAttemptTimeoutException)
             return true;
-        // Accept SdkClientException only when its root cause is an IOException
-        // (e.g., RetryableException wrapping a SocketException from a TCP reset)
-        if (t instanceof SdkClientException sce) {
-            Throwable cause = sce.getCause();
-            return cause instanceof IOException;
+        
+        // AWS SDK often deeply nests exceptions (e.g., SdkClientException -> RetryableException -> ConnectException).
+        // Safely traverse the entire cause chain to find any underlying network failure.
+        Throwable cause = t.getCause();
+        while (cause != null) {
+            if (cause instanceof IOException) {
+                return true;
+            }
+            if (cause == cause.getCause()) {
+                break; // Prevent infinite loops in malformed exception chains
+            }
+            cause = cause.getCause();
         }
         return false;
     }
