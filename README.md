@@ -3,7 +3,8 @@
 Multi-endpoint **MinIO / S3-compatible** Java client: **bulkhead** metadata vs data HTTP pools, **round-robin** with optional node quarantine, and **multipart `uploadId` affinity** across `createMultipartUpload` → parts → complete/abort.
 
 - **Java 17**, **Maven**, AWS SDK for Java v2 (`aws.java.sdk.version` in `pom.xml`).
-- **Iceberg**: `CdsIcebergS3ClientFactory` implements `AwsClientFactory` for `S3FileIO`.
+- **Iceberg**: `CdsIcebergS3ClientFactory` implements `AwsClientFactory` for `S3FileIO`. The MinIO integration test uses `JdbcCatalog` (H2) and `s3://` warehouse paths—no Hadoop `s3a://` / S3A client configuration. Tests depend on `hadoop-common` and `hadoop-mapreduce-client-core` only so Iceberg Parquet can load Hadoop types; object I/O still uses `S3FileIO`, not `hadoop-aws` / S3A.
+- **S3FileIO staging**: use Iceberg `s3.staging-directory` on a data volume, or call `IcebergS3FileIOStaging.applyPreferredStagingDirectory(catalogProps)` (env `HAS3A_S3_STAGING_DIRECTORY` / property `has3a.s3.staging-directory`) so uploads do not fill `java.io.tmpdir` on the system disk.
 
 ## Multipart and data-tier routing
 

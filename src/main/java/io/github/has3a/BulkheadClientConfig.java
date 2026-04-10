@@ -8,7 +8,7 @@ import java.time.Duration;
  *
  * <p>Two independent Apache HTTP connection pools are maintained per MinIO endpoint:
  * <ul>
- *   <li><b>Metadata tier</b> �?low-latency pool for small, short-lived operations
+ *   <li><b>Metadata tier</b> low-latency pool for small, short-lived operations
  *       (list, head, createMultipartUpload, etc.)</li>
  *   <li><b>Data tier</b> �?high-throughput pool for bulk transfers
  *       (put, get, uploadPart, etc.)</li>
@@ -50,6 +50,10 @@ public final class BulkheadClientConfig {
     public static final Duration DEFAULT_DATA_SOCKET_TIMEOUT                   = Duration.ofSeconds(60);
     /** Default max wait time to acquire a connection from the data pool. */
     public static final Duration DEFAULT_DATA_CONNECTION_ACQUISITION_TIMEOUT   = Duration.ofSeconds(5);
+    /** Default HTTP Expect: 100-continue behavior for data PUT operations. */
+    public static final boolean  DEFAULT_DATA_EXPECT_CONTINUE_ENABLED          = true;
+    /** Default SDK level total API call timeout (null means disabled/infinite). */
+    public static final Duration DEFAULT_DATA_API_CALL_TIMEOUT                 = null;
 
     // ── Proxy defaults ────────────────────────────────────────────────────────
     /**
@@ -76,6 +80,8 @@ public final class BulkheadClientConfig {
     private final Duration dataConnectionTimeout;
     private final Duration dataSocketTimeout;
     private final Duration dataConnectionAcquisitionTimeout;
+    private final boolean  dataExpectContinueEnabled;
+    private final Duration dataApiCallTimeout;
 
     private final long quarantineTtlMillis;
     private final long multipartRouteIdleTtlMillis;
@@ -91,6 +97,8 @@ public final class BulkheadClientConfig {
         this.dataConnectionTimeout                  = b.dataConnectionTimeout;
         this.dataSocketTimeout                      = b.dataSocketTimeout;
         this.dataConnectionAcquisitionTimeout       = b.dataConnectionAcquisitionTimeout;
+        this.dataExpectContinueEnabled              = b.dataExpectContinueEnabled;
+        this.dataApiCallTimeout                     = b.dataApiCallTimeout;
         this.quarantineTtlMillis                    = b.quarantineTtlMillis;
         this.multipartRouteIdleTtlMillis            = b.multipartRouteIdleTtlMillis;
     }
@@ -116,6 +124,8 @@ public final class BulkheadClientConfig {
     public Duration dataConnectionTimeout()                  { return dataConnectionTimeout; }
     public Duration dataSocketTimeout()                      { return dataSocketTimeout; }
     public Duration dataConnectionAcquisitionTimeout()       { return dataConnectionAcquisitionTimeout; }
+    public boolean  dataExpectContinueEnabled()              { return dataExpectContinueEnabled; }
+    public Duration dataApiCallTimeout()                     { return dataApiCallTimeout; }
 
     public long     quarantineTtlMillis()                    { return quarantineTtlMillis; }
     public long     multipartRouteIdleTtlMillis()            { return multipartRouteIdleTtlMillis; }
@@ -133,6 +143,8 @@ public final class BulkheadClientConfig {
         private Duration dataConnectionTimeout                = DEFAULT_DATA_CONNECTION_TIMEOUT;
         private Duration dataSocketTimeout                    = DEFAULT_DATA_SOCKET_TIMEOUT;
         private Duration dataConnectionAcquisitionTimeout     = DEFAULT_DATA_CONNECTION_ACQUISITION_TIMEOUT;
+        private boolean  dataExpectContinueEnabled            = DEFAULT_DATA_EXPECT_CONTINUE_ENABLED;
+        private Duration dataApiCallTimeout                   = DEFAULT_DATA_API_CALL_TIMEOUT;
 
         private long quarantineTtlMillis         = DEFAULT_QUARANTINE_TTL_MILLIS;
         private long multipartRouteIdleTtlMillis = DEFAULT_MULTIPART_ROUTE_IDLE_TTL_MILLIS;
@@ -156,6 +168,10 @@ public final class BulkheadClientConfig {
         public Builder dataSocketTimeout(Duration v)                 { dataSocketTimeout = v;                    return this; }
         /** Maximum wait to acquire a connection from the <b>data</b> pool. */
         public Builder dataConnectionAcquisitionTimeout(Duration v)  { dataConnectionAcquisitionTimeout = v;     return this; }
+        /** Set whether to enable HTTP Expect: 100-continue for large payloads on data pool. */
+        public Builder dataExpectContinueEnabled(boolean v)          { dataExpectContinueEnabled = v;            return this; }
+        /** Set an overall max timeout for an S3 API call over the data pool. Null disables the limit. */
+        public Builder dataApiCallTimeout(Duration v)                { dataApiCallTimeout = v;                   return this; }
 
         /**
          * Duration in milliseconds for which a node is excluded from routing after a network failure.

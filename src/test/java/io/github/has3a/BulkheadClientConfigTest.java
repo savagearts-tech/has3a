@@ -146,7 +146,7 @@ class BulkheadClientConfigTest {
     void icebergFactory_parseConfig_customPoolSize() {
         // We verify the property-parsing helpers in isolation via reflection-free
         // black-box: initialize with custom properties and confirm no exception.
-        // (Full integration with live MinIO is covered by IcebergHadoopCatalogExampleTest.)
+        // (Full integration with live MinIO is covered by IcebergS3FileIOCatalogIntegrationTest.)
         java.util.Map<String, String> props = new java.util.HashMap<>();
         props.put("s3.access-key-id",                       "minioadmin");
         props.put("s3.secret-access-key",                   "minioadmin");

@@ -35,6 +35,13 @@ import java.util.stream.Collectors;
  *   <tr><td>{@code s3.proxy.quarantine-ttl-ms}</td><td>30000</td><td>Node quarantine duration (ms)</td></tr>
  *   <tr><td>{@code s3.proxy.multipart-route-idle-ttl-ms}</td><td>120000</td><td>Multipart upload sticky route idle timeout (ms)</td></tr>
  * </table>
+ *
+ * <p><b>S3FileIO staging disk:</b> {@code S3FileIO} writes multipart upload staging files under
+ * {@code s3.staging-directory}, defaulting to {@code java.io.tmpdir}. To avoid filling the system
+ * disk, set {@code s3.staging-directory} to a directory on a data volume, or call
+ * {@link IcebergS3FileIOStaging#applyPreferredStagingDirectory(java.util.Map)} before catalog init
+ * (see {@link IcebergS3FileIOStaging#HAS3A_STAGING_CATALOG_KEY} / env
+ * {@link IcebergS3FileIOStaging#HAS3A_STAGING_ENV}).
  */
 public class CdsIcebergS3ClientFactory implements org.apache.iceberg.aws.AwsClientFactory {
     private S3Client cachedProxyClient;
@@ -47,7 +54,7 @@ public class CdsIcebergS3ClientFactory implements org.apache.iceberg.aws.AwsClie
                 .map(URI::create)
                 .collect(Collectors.toList());
 
-        // Fail fast at initialization time �?a missing credential surfaces as an opaque 403
+        // Fail fast at initialization time: a missing credential surfaces as an opaque 403
         // at the first S3 call which is very hard to diagnose.
         String accessKey = Objects.requireNonNull(
                 properties.get("s3.access-key-id"),
@@ -118,6 +125,12 @@ public class CdsIcebergS3ClientFactory implements org.apache.iceberg.aws.AwsClie
                 .dataConnectionAcquisitionTimeout(
                         durationMsProp(p, "s3.pool.data.acquisition-timeout-ms",
                                 BulkheadClientConfig.DEFAULT_DATA_CONNECTION_ACQUISITION_TIMEOUT))
+                .dataExpectContinueEnabled(
+                        booleanProp(p, "s3.pool.data.expect-continue",
+                                BulkheadClientConfig.DEFAULT_DATA_EXPECT_CONTINUE_ENABLED))
+                .dataApiCallTimeout(
+                        durationMsProp(p, "s3.pool.data.api-call-timeout-ms",
+                                BulkheadClientConfig.DEFAULT_DATA_API_CALL_TIMEOUT))
                 .quarantineTtlMillis(
                         longProp(p, "s3.proxy.quarantine-ttl-ms",
                                 BulkheadClientConfig.DEFAULT_QUARANTINE_TTL_MILLIS))
@@ -132,6 +145,11 @@ public class CdsIcebergS3ClientFactory implements org.apache.iceberg.aws.AwsClie
         return v != null ? Integer.parseInt(v.trim()) : defaultVal;
     }
 
+    private static boolean booleanProp(Map<String, String> p, String key, boolean defaultVal) {
+        String v = p.get(key);
+        return v != null ? Boolean.parseBoolean(v.trim()) : defaultVal;
+    }
+
     private static long longProp(Map<String, String> p, String key, long defaultVal) {
         String v = p.get(key);
         return v != null ? Long.parseLong(v.trim()) : defaultVal;
@@ -139,6 +157,9 @@ public class CdsIcebergS3ClientFactory implements org.apache.iceberg.aws.AwsClie
 
     private static Duration durationMsProp(Map<String, String> p, String key, Duration defaultVal) {
         String v = p.get(key);
-        return v != null ? Duration.ofMillis(Long.parseLong(v.trim())) : defaultVal;
+        if (v == null || v.trim().isEmpty()) {
+            return defaultVal;
+        }
+        return Duration.ofMillis(Long.parseLong(v.trim()));
     }
 }

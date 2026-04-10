@@ -3,7 +3,6 @@ package io.github.has3a;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import software.amazon.awssdk.core.exception.ApiCallAttemptTimeoutException;
-import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CreateMultipartUploadResponse;
 import software.amazon.awssdk.services.s3.model.CompleteMultipartUploadResponse;
@@ -387,9 +386,11 @@ public class SmartS3ClientProxy implements InvocationHandler, S3ClientPoolManage
             return true;
         if (t instanceof ApiCallAttemptTimeoutException)
             return true;
-        
-        // AWS SDK often deeply nests exceptions (e.g., SdkClientException -> RetryableException -> ConnectException).
-        // Safely traverse the entire cause chain to find any underlying network failure.
+
+        // AWS SDK often deeply nests exceptions (e.g., SdkClientException ->
+        // RetryableException -> ConnectException).
+        // Safely traverse the entire cause chain to find any underlying network
+        // failure.
         Throwable cause = t.getCause();
         while (cause != null) {
             if (cause instanceof IOException) {

@@ -85,14 +85,15 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>org.apache.hadoop</groupId>
-            <artifactId>hadoop-common</artifactId>
-            <version>3.3.6</version>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <version>2.2.224</version>
             <scope>test</scope>
         </dependency>
+        <!-- Iceberg Parquet read/write pulls Hadoop Configuration + MR APIs; not used for s3a:// data access -->
         <dependency>
             <groupId>org.apache.hadoop</groupId>
-            <artifactId>hadoop-aws</artifactId>
+            <artifactId>hadoop-common</artifactId>
             <version>3.3.6</version>
             <scope>test</scope>
         </dependency>

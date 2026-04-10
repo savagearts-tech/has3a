@@ -68,14 +68,16 @@ public class BulkheadS3ClientFactory {
                         config.metadataMaxConnections(),
                         config.metadataConnectionTimeout(),
                         config.metadataSocketTimeout(),
-                        config.metadataConnectionAcquisitionTimeout()
+                        config.metadataConnectionAcquisitionTimeout(),
+                        true // Metadata always defaults to true
                 );
 
                 SdkHttpClient dataHttpClient = buildApacheHttpClient(
                         config.dataMaxConnections(),
                         config.dataConnectionTimeout(),
                         config.dataSocketTimeout(),
-                        config.dataConnectionAcquisitionTimeout()
+                        config.dataConnectionAcquisitionTimeout(),
+                        config.dataExpectContinueEnabled()
                 );
 
                 S3Client metadataClient = S3Client.builder()
@@ -86,13 +88,18 @@ public class BulkheadS3ClientFactory {
                         .httpClient(metadataHttpClient)
                         .build();
 
-                S3Client dataClient = S3Client.builder()
+                software.amazon.awssdk.services.s3.S3ClientBuilder dataClientBuilder = S3Client.builder()
                         .endpointOverride(endpoint)
                         .region(region)
                         .credentialsProvider(credentialsProvider)
                         .serviceConfiguration(s3Config)
-                        .httpClient(dataHttpClient)
-                        .build();
+                        .httpClient(dataHttpClient);
+                        
+                if (config.dataApiCallTimeout() != null) {
+                    dataClientBuilder.overrideConfiguration(c -> c.apiCallTimeout(config.dataApiCallTimeout()));
+                }
+                
+                S3Client dataClient = dataClientBuilder.build();
 
                 metadataClients.add(metadataClient);
                 dataClients.add(dataClient);
@@ -130,13 +137,15 @@ public class BulkheadS3ClientFactory {
             int      maxConnections,
             Duration connectionTimeout,
             Duration socketTimeout,
-            Duration connectionAcquisitionTimeout) {
+            Duration connectionAcquisitionTimeout,
+            boolean  expectContinueEnabled) {
 
         return ApacheHttpClient.builder()
                 .maxConnections(maxConnections)
                 .connectionTimeout(connectionTimeout)
                 .socketTimeout(socketTimeout)
                 .connectionAcquisitionTimeout(connectionAcquisitionTimeout)
+                .expectContinueEnabled(expectContinueEnabled)
                 .tcpKeepAlive(true)
                 .build();
     }

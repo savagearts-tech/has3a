@@ -1,0 +1,1 @@
+public class PrintIcebergConfig { public static void main(String[] args) throws Exception { for (java.lang.reflect.Field f : org.apache.iceberg.aws.AwsProperties.class.getFields()) { System.out.println(f.getName() + " = \ + f.get(null)); } } }
